@@ -27,20 +27,6 @@
   description: Low priority. Minor issue, edge case, or nice-to-have.
   color: "fbca04"
 
-- name: sentry
-  description: Auto-created from Sentry crash report.
-  color: "444444"
-- name: supabase-advisor
-  description: Auto-created from Supabase advisor finding.
-  color: "444444"
-
-- name: severity:error
-  description: Crash, exception, or hard failure.
-  color: "e11d21"
-- name: severity:warn
-  description: Warning-level finding, non-blocking.
-  color: "f9d71c"
-
 - name: security
   description: Security-related - auth bypass, secret exposure, vulnerability, or hardening.
   color: "ee0701"
