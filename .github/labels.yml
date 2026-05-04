@@ -1,0 +1,56 @@
+# Label vocabulary. Edit and merge -> label-sync.yml reconciles via GitHub API.
+# Description is the rubric Claude triage uses (max 100 chars).
+
+- name: bug
+  description: Something isn't working as designed.
+  color: "d73a4a"
+- name: enhancement
+  description: New feature or improvement to existing functionality.
+  color: "a2eeef"
+- name: documentation
+  description: Improvements or additions to documentation.
+  color: "0075ca"
+- name: question
+  description: Further information is requested or clarification needed.
+  color: "d876e3"
+- name: idea
+  description: Open-ended exploration or unscoped concept; not yet ready to schedule.
+  color: "ededed"
+
+- name: p1
+  description: Showstopper. Production broken, data loss, or security incident.
+  color: "b60205"
+- name: p2
+  description: Normal priority. Real bug or commonly requested feature.
+  color: "d93f0b"
+- name: p3
+  description: Low priority. Minor issue, edge case, or nice-to-have.
+  color: "fbca04"
+
+- name: sentry
+  description: Auto-created from Sentry crash report.
+  color: "444444"
+- name: supabase-advisor
+  description: Auto-created from Supabase advisor finding.
+  color: "444444"
+
+- name: severity:error
+  description: Crash, exception, or hard failure.
+  color: "e11d21"
+- name: severity:warn
+  description: Warning-level finding, non-blocking.
+  color: "f9d71c"
+
+- name: security
+  description: Security-related - auth bypass, secret exposure, vulnerability, or hardening.
+  color: "ee0701"
+
+- name: duplicate
+  description: This issue or pull request already exists.
+  color: "cfd3d7"
+- name: invalid
+  description: Empty, wrong repo, or otherwise not a real issue.
+  color: "e4e669"
+- name: wontfix
+  description: Working as intended or out of scope.
+  color: "ffffff"
