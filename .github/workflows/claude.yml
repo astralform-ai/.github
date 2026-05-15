@@ -3,6 +3,11 @@ name: Claude
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: Runner label or labels (e.g. ubuntu-latest, self-hosted)
+        type: string
+        default: ubuntu-latest
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
@@ -16,7 +21,7 @@ jobs:
         (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
         (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     permissions:
       contents: write
       pull-requests: write

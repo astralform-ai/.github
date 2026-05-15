@@ -3,13 +3,18 @@ name: Issue Triage
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: Runner label or labels (e.g. ubuntu-latest, self-hosted)
+        type: string
+        default: ubuntu-latest
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
 
 jobs:
   triage:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
     permissions:
       contents: read
