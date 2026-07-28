@@ -14,12 +14,27 @@ on:
 
 jobs:
   claude:
+    # Two independent gates, both required:
+    #
+    # 1. Not a bot — the self-trigger loop guard. claude[bot] writing '@claude'
+    #    must not re-summon itself.
+    # 2. Trusted actor — an AUTHORIZATION gate, which (1) is not. This job runs
+    #    in the base-repo context with `contents: write` and the OAuth token, and
+    #    (since the checkout below targets the PR head) with the PR's code in the
+    #    workspace. On a PUBLIC repo, without this gate any stranger could
+    #    comment '@claude' on a fork PR and have their code run privileged.
+    #    On private repos every commenter is already a MEMBER/COLLABORATOR, so
+    #    this changes nothing there.
     if: |
       github.event.sender.type != 'Bot' && (
-        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')
+          && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')
+          && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')
+          && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))
+          && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
       )
     runs-on: ${{ inputs.runner }}
     permissions:
@@ -31,7 +46,30 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          # Check out the PR HEAD, not the default branch.
+          #
+          # This workflow is comment-triggered, so `github.ref` is the default
+          # branch — NOT the PR. Without an explicit ref, an @claude mention on a
+          # PR reviews `main` while believing it is looking at the PR:
+          #   - PR ADDS files      -> `fatal: could not open <path>`, job dies.
+          #   - PR MODIFIES files  -> job "succeeds" against the pre-PR content,
+          #                           which is the dangerous one: a confident
+          #                           review of code that is not under review.
+          #
+          # `pull_request_review{,_comment}` carry `pull_request.head.sha`
+          # directly. `issue_comment` does not — it only tells us the issue IS a
+          # PR (`issue.pull_request` is present), so resolve via refs/pull/N/head.
+          # Plain issues match neither and fall through to '' = the default ref,
+          # which is correct for them.
+          ref: >-
+            ${{ github.event.pull_request.head.sha
+             || (github.event.issue.pull_request
+                 && format('refs/pull/{0}/head', github.event.issue.number))
+             || '' }}
+          # Deep enough to diff a PR against its base locally. depth 1 leaves a
+          # detached single commit, so any `git diff <base>...<head>` fails and
+          # Claude silently falls back to API-only inspection.
+          fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
