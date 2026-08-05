@@ -50,7 +50,6 @@ jobs:
           ls -ld /home /home/.claude /home/.mcp.json || true
 
       - uses: anthropics/claude-code-action@v1
-        id: claude
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_non_write_users: "*"
@@ -87,35 +86,3 @@ jobs:
           claude_args: |
             --max-turns 20
             --allowedTools "Bash(gh label list:*),Bash(gh issue view:*),Bash(gh search issues:*),Bash(gh issue edit:*)"
-
-      # TEMPORARY diagnostic — remove once triage is labelling again.
-      #
-      # #4 raised the turn ceiling and the job went from `failure` to `success`,
-      # but it still applies no labels: a test issue produced 11 turns, 3
-      # permission denials and zero labels, where the same workflow labelled
-      # correctly in May. Green-and-does-nothing is worse than red, and the
-      # cause cannot be found from the log — it carries the prompt but not the
-      # tool calls, and not WHICH tools were denied. Two rounds of diagnosis
-      # were spent reading the prompt's own step-5 example text echoed back and
-      # mistaking it for invocations.
-      #
-      # The action already writes all of it to execution_file and then throws it
-      # away with the runner. This prints it.
-      - name: Print the execution log
-        if: always()
-        env:
-          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-        run: |
-          if [ -z "$EXECUTION_FILE" ] || [ ! -f "$EXECUTION_FILE" ]; then
-            echo "No execution file at '${EXECUTION_FILE:-<unset>}'"
-            exit 0
-          fi
-          echo "--- denials and tool calls ---"
-          jq -r '
-            (.. | objects | select(has("permission_denials")) | .permission_denials[]?
-              | "DENIED: \(.tool_name) \(.tool_input // {} | tostring | .[0:200])"),
-            (.. | objects | select(.type? == "tool_use")
-              | "CALL:   \(.name) \(.input // {} | tostring | .[0:200])")
-          ' "$EXECUTION_FILE" 2>/dev/null || echo "(jq could not parse it)"
-          echo "--- raw ---"
-          cat "$EXECUTION_FILE"
