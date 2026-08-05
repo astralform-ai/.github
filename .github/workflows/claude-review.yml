@@ -8,10 +8,25 @@ name: Claude PR Review
 # workflow's permissions are intersected with the caller's, so requesting it
 # here alone does nothing.
 #
-# Safe because every calling repo is private with forking disabled: a PR can
-# only come from an org member, so running its package.json scripts is the same
-# trust level as running them locally. Do not add a public repo as a caller
-# without revisiting that.
+# Running a PR's package.json scripts is safe here for two reasons, and it is
+# worth being precise about which, because the obvious one is wrong: callers
+# are NOT all private. Five of the ten are public (MCPKit, docs, skills,
+# astralform-plugins, Astralform-JS-SDK), so "only org members can open a PR"
+# does not hold.
+#
+# What actually holds:
+#   1. The public callers do not pass `runner`, so they get the ephemeral
+#      `ubuntu-latest` default — never the org's persistent self-hosted pool.
+#      Only the private callers (Astralform, astralform-chat) pass self-hosted.
+#   2. This fires on `pull_request`, not `pull_request_target`. GitHub
+#      withholds secrets from fork-originated `pull_request` runs, so
+#      CLAUDE_CODE_OAUTH_TOKEN is absent and the review step fails before any
+#      npm/npx can run.
+#
+# Both are load-bearing. Adding `runner: self-hosted` to a public caller breaks
+# (1); switching to `pull_request_target` breaks (2). Either alone turns this
+# into fork-PR code execution — check both before changing the trigger or a
+# caller's runner.
 
 on:
   workflow_call:
@@ -40,6 +55,37 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Fail loudly if the workspace is not the repo this run is reviewing.
+      #
+      # A review once posted findings for a DIFFERENT repository's files
+      # (astralform-ai/Astralform#688): seven real astralform-chat paths, every
+      # line number in range, on an Astralform PR — and the check still went
+      # green, because the comments merely failed to anchor. A green check
+      # backed by someone else's code is worse than a red one; nothing in the
+      # PR UI showed the review had gone wrong.
+      #
+      # Self-hosted runners do not clean `_work` between jobs, so a sibling
+      # repo's checkout can persist for hours. This asserts the one thing that
+      # must be true before anything reads the tree, and turns a silent
+      # wrong-repo review into a failed job.
+      - name: Assert the workspace is this repository
+        env:
+          EXPECTED_REPO: ${{ github.repository }}
+        run: |
+          # Exact match on a normalised owner/repo, NOT a substring: this org
+          # has names that prefix each other (Astralform vs Astralform-JS-SDK,
+          # Astralform-iOS-SDK), so a substring test would pass on precisely
+          # the mix-up this step exists to catch.
+          origin="$(git remote get-url origin)"
+          actual="$(printf '%s' "$origin" \
+            | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^https?://[^/]+/##')"
+          if [ "$actual" = "$EXPECTED_REPO" ]; then
+            echo "workspace OK: $actual"
+          else
+            echo "::error::Workspace mismatch — this run is reviewing $EXPECTED_REPO but the checkout is $actual ($origin)"
+            exit 1
+          fi
+
       # Written into the workspace rather than ~/.npmrc: the runner may be
       # self-hosted, where $HOME persists between jobs and would accumulate a
       # dead token line per run.
@@ -52,6 +98,14 @@ jobs:
           printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" >> "$GITHUB_WORKSPACE/.npmrc"
 
       - uses: anthropics/claude-code-action@v1
+        # `gh` resolves its repo from $GH_REPO first, else the git remote of
+        # the working directory. The allowed tools are all `gh pr *`, so a
+        # stray or stale git dir is enough to make `gh pr diff` return another
+        # repo's changes — the suspected channel for #688, where the reviewer
+        # had no file-reading tools at all yet still produced real paths from a
+        # sibling repo. Pinning it removes the inference entirely.
+        env:
+          GH_REPO: ${{ github.repository }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
