@@ -70,6 +70,25 @@ jobs:
           # detached single commit, so any `git diff <base>...<head>` fails and
           # Claude silently falls back to API-only inspection.
           fetch-depth: 0
+      # Bubblewrap creates its bind-mount TARGETS before mounting, and Claude Code's
+      # sandbox puts two of them directly under /home, which is root-owned. The create
+      # fails, the sandbox never initialises, and EVERY Bash command dies before it
+      # runs — `echo hello` included:
+      #
+      #   bwrap: Can't create file at /home/.mcp.json: Permission denied
+      #
+      # Same fix as issue-triage.yml and claude-review.yml; this workflow was missed
+      # because it has no allowlist of its own, so its broken shell showed up as
+      # "I couldn't run that command" rather than as a failing job.
+      - name: Give bubblewrap its bind targets under /home
+        run: |
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO mkdir -p /home/.claude || true
+          $SUDO touch /home/.mcp.json || true
+          $SUDO chmod 0777 /home/.claude /home/.mcp.json || true
+          ls -ld /home /home/.claude /home/.mcp.json || true
+
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
