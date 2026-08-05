@@ -97,6 +97,31 @@ jobs:
           printf '@astralform-ai:registry=https://npm.pkg.github.com\n' > "$GITHUB_WORKSPACE/.npmrc"
           printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" >> "$GITHUB_WORKSPACE/.npmrc"
 
+      # Bubblewrap creates its bind-mount TARGETS before mounting, and Claude Code's
+      # sandbox puts two of them directly under /home:
+      #
+      #   bwrap: Can't create file at /home/.mcp.json: Permission denied
+      #   bwrap: Can't mkdir /home/.claude: Permission denied
+      #
+      # /home is root-owned on both GitHub-hosted ubuntu and our self-hosted box, so
+      # the create fails, the sandbox never initialises, and EVERY Bash command dies
+      # before it runs — `echo hello` included. Pre-creating the targets writable is
+      # enough: bwrap then mounts over them instead of trying to make them.
+      #
+      # Deliberately not the alternatives: `sandbox.enabled: false` is ignored on
+      # Linux (anthropics/claude-code#35986, closed as not planned — measured
+      # ignored here too, 17 bwrap lines with it set), and deleting /usr/bin/bwrap
+      # would persist on the self-hosted runner and strip the sandbox from every
+      # workload on that host. This keeps the sandbox on.
+      - name: Give bubblewrap its bind targets under /home
+        run: |
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO mkdir -p /home/.claude || true
+          $SUDO touch /home/.mcp.json || true
+          $SUDO chmod 0777 /home/.claude /home/.mcp.json || true
+          ls -ld /home /home/.claude /home/.mcp.json || true
+
       - uses: anthropics/claude-code-action@v1
         # `gh` resolves its repo from $GH_REPO first, else the git remote of
         # the working directory. The allowed tools are all `gh pr *`, so a
@@ -107,9 +132,6 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
         with:
-          # See issue-triage.yml for why: bwrap cannot create ~/.claude on these
-          # runners, so the sandbox launcher fails and every Bash command dies.
-          settings: '{"sandbox": {"enabled": false}}'
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}

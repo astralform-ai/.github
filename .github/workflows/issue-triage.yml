@@ -24,30 +24,34 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      # Bubblewrap creates its bind-mount TARGETS before mounting, and Claude Code's
+      # sandbox puts two of them directly under /home:
+      #
+      #   bwrap: Can't create file at /home/.mcp.json: Permission denied
+      #   bwrap: Can't mkdir /home/.claude: Permission denied
+      #
+      # /home is root-owned on both GitHub-hosted ubuntu and our self-hosted box, so
+      # the create fails, the sandbox never initialises, and EVERY Bash command dies
+      # before it runs — `echo hello` included. Pre-creating the targets writable is
+      # enough: bwrap then mounts over them instead of trying to make them.
+      #
+      # Deliberately not the alternatives: `sandbox.enabled: false` is ignored on
+      # Linux (anthropics/claude-code#35986, closed as not planned — measured
+      # ignored here too, 17 bwrap lines with it set), and deleting /usr/bin/bwrap
+      # would persist on the self-hosted runner and strip the sandbox from every
+      # workload on that host. This keeps the sandbox on.
+      - name: Give bubblewrap its bind targets under /home
+        run: |
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO mkdir -p /home/.claude || true
+          $SUDO touch /home/.mcp.json || true
+          $SUDO chmod 0777 /home/.claude /home/.mcp.json || true
+          ls -ld /home /home/.claude /home/.mcp.json || true
+
       - uses: anthropics/claude-code-action@v1
         id: claude
-        # The Bash tool does not work at all with Claude Code's bwrap sandbox on
-        # these runners. Every command — including a plain `echo test` — dies before
-        # it runs:
-        #
-        #   bwrap: Can't mkdir /home/.claude: Permission denied
-        #
-        # Inside the sandbox namespace HOME resolves to `/home`, which is not
-        # writable, so Claude Code cannot create its own config dir and the launcher
-        # never comes up. `~/.claude` is a fixed path — there is no CLAUDE_CONFIG_DIR
-        # to point elsewhere — and setting HOME on the step does not reach inside the
-        # namespace (tried: the error only moved from `.mcp.json` to `.claude`).
-        # It is not runner-specific: it reproduces on GitHub-hosted ubuntu.
-        #
-        # So turn the sandbox off. The isolation that matters in CI is the
-        # `--allowedTools` allowlist plus an ephemeral VM, neither of which this
-        # touches. Upstream anthropics/claude-code#35986 reports this setting being
-        # ignored on some Linux versions and was closed as not planned, so if the
-        # next run still shows bwrap lines, the remaining levers are removing
-        # /usr/bin/bwrap on the runner or pinning the action to a pre-sandbox
-        # release — both worse, which is why this is the one being tried first.
         with:
-          settings: '{"sandbox": {"enabled": false}}'
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_non_write_users: "*"
           prompt: |
