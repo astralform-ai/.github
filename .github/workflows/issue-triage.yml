@@ -45,6 +45,19 @@ jobs:
               - DO NOT post comments on the issue.
               - DO NOT use any label not present in `gh label list` output.
               - If nothing applies cleanly, apply nothing.
+              - The four `gh` commands above are the ONLY tools you have. Reading
+                files, searching the repo, writing todos and every other command
+                are denied — each attempt costs a turn and buys nothing. This is a
+                labelling job, not an investigation: do not open the codebase, and
+                ignore any repo convention that asks you to verify, test or build.
+          # 8 was too tight and every run died on it. The floor is 4 calls
+          # (labels, issue, optional search, edit) with no room for a retry, and
+          # the agent runs on the full claude_code system prompt with
+          # settingSources including `project` — so in a repo with a CLAUDE.md it
+          # reaches for tools this allowlist forbids. Those denials are charged as
+          # turns: recent runs burned 1, 5 and 6 of 8 before doing any work. The
+          # prompt now says the toolset is closed; this leaves headroom for when
+          # it asks anyway.
           claude_args: |
-            --max-turns 8
+            --max-turns 20
             --allowedTools "Bash(gh label list:*),Bash(gh issue view:*),Bash(gh search issues:*),Bash(gh issue edit:*)"
