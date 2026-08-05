@@ -104,26 +104,12 @@ jobs:
         # repo's changes — the suspected channel for #688, where the reviewer
         # had no file-reading tools at all yet still produced real paths from a
         # sibling repo. Pinning it removes the inference entirely.
-        # HOME must be writable, or the Bash tool does not work AT ALL.
-        #
-        # Claude Code runs every Bash command inside a bubblewrap sandbox, and the
-        # sandbox writes `$HOME/.mcp.json` on launch. On this self-hosted runner HOME
-        # resolves to `/home`, which is not writable from inside the sandbox, so EVERY
-        # command dies before it runs:
-        #
-        #   bwrap: Can't create file at /home/.mcp.json: Permission denied
-        #
-        # Measured, not guessed: astralform-ai/skills#12 produced 18 of these in one
-        # run, including on a plain `echo test`. It is not about `gh`, the allowlist,
-        # credentials, or the turn budget.
-        #
-        # The failure is quiet, which is why it took three attempts to find. The agent
-        # cannot fetch anything, correctly declines to invent labels, and finishes
-        # cleanly — so the job reports SUCCESS while doing nothing.
         env:
-          HOME: ${{ runner.temp }}
           GH_REPO: ${{ github.repository }}
         with:
+          # See issue-triage.yml for why: bwrap cannot create ~/.claude on these
+          # runners, so the sandbox launcher fails and every Bash command dies.
+          settings: '{"sandbox": {"enabled": false}}'
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
