@@ -92,3 +92,12 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Same pin as claude-review.yml, and for the same reason: an @claude
+          # mention is how a re-review is requested after a fix push, so this
+          # handler does review work too. Leaving it on the action's default
+          # would mean the first review and the re-review ran on different
+          # models — with nothing in either run saying so.
+          #
+          # `claude-opus-5` is complete as written; a date suffix 404s.
+          claude_args: |
+            --model claude-opus-5
