@@ -155,5 +155,15 @@ jobs:
             Use `gh pr comment` for one top-level summary.
             Use mcp__github_inline_comment__create_inline_comment (with confirmed: true)
             for line-specific findings. Do not respond as a chat message.
+          # Pin the model. Unset, the action picks its own default, which is not
+          # the Opus tier — and a review is the one job here where model quality
+          # IS the product: this is the only gate these repos run on a PR, so a
+          # weaker reviewer is not a cheaper review, it is a missed bug. Nothing
+          # in the run surfaces which model reviewed, so the default is invisible
+          # until you go looking for it.
+          #
+          # `claude-opus-5` is the complete id — the current Opus. Do NOT append
+          # a date suffix; the dated form is a different string and 404s.
           claude_args: |
+            --model claude-opus-5
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(npm:*),Bash(npx:*)"
