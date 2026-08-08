@@ -97,6 +97,47 @@ jobs:
           printf '@astralform-ai:registry=https://npm.pkg.github.com\n' > "$GITHUB_WORKSPACE/.npmrc"
           printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" >> "$GITHUB_WORKSPACE/.npmrc"
 
+      # The reviewer has to be able to RUN the suite, not just read it. Without this,
+      # `node` and `npm` are simply absent on some runners ("npm: command not found",
+      # and no node either), and on a repo that declares `packageManager: pnpm@x`
+      # there is no pnpm at all — so the install fails, the review falls back to
+      # reading the diff (which the prompt below tells it to do), and every
+      # behavioural claim in that review is asserted rather than verified. Measured
+      # on Astralform-JS-SDK: roughly one review in three could not install, on a PR
+      # that ran to 23 rounds and 59 findings. Whether a finding got checked came
+      # down to luck.
+      #
+      # `corepack enable` reads `packageManager` from package.json, so each repo gets
+      # the manager and version it actually declares and npm-only repos are
+      # unaffected. Both steps are gated on a package.json existing, matching the
+      # npm-auth step above, so non-JS repos skip them entirely.
+      #
+      # COREPACK_ENABLE_DOWNLOAD_PROMPT goes into $GITHUB_ENV rather than this step's
+      # env: corepack asks for confirmation the first time it fetches a pinned
+      # version, and that prompt appears when the REVIEW step invokes the package
+      # manager, not here. Unset, the install stalls on a question nobody answers.
+      #
+      # Node 22 because that is what the code being reviewed is built and shipped
+      # with: Astralform-JS-SDK's release.yml pins 22 ("current LTS, Node 20 reached
+      # EOL 2026-04") and frontend/Dockerfile builds on node:22-alpine. No caller
+      # declares `engines`, so nothing forces a version — which is exactly why this
+      # should track the release pipeline rather than a number picked here. A gate
+      # running an older runtime than the release build can pass on code that ships
+      # broken, and vice versa.
+      - name: Provide Node for the review gate
+        if: hashFiles('**/package.json') != ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Enable corepack so the repo's own package manager is available
+        if: hashFiles('**/package.json') != ''
+        run: |
+          corepack enable
+          echo "COREPACK_ENABLE_DOWNLOAD_PROMPT=0" >> "$GITHUB_ENV"
+          node --version
+          corepack --version
+
       # Bubblewrap creates its bind-mount TARGETS before mounting, and Claude Code's
       # sandbox puts two of them directly under /home:
       #
