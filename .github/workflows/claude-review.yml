@@ -205,6 +205,28 @@ jobs:
           #
           # `claude-opus-5` is the complete id — the current Opus. Do NOT append
           # a date suffix; the dated form is a different string and 404s.
+          #
+          # ---
+          #
+          # `pnpm` belongs in this list for the same reason `npm` does, and its
+          # absence was invisible in a way worth spelling out: the tool was
+          # PRESENT and FORBIDDEN. #13 put a pnpm shim on PATH (verified —
+          # `which pnpm` resolves under the hosted toolcache), and every
+          # invocation still died with "refused before executing", because this
+          # list gates what the reviewer may run and named only npm.
+          #
+          # That is what made the failure look like flaky infrastructure rather
+          # than a missing permission: Astralform-JS-SDK declares
+          # `packageManager: pnpm@10.30.1`, so the reviewer could only install by
+          # reaching for `npm install --prefix packages/core` — which sometimes
+          # worked and sometimes did not. The runs that "rescued themselves" were
+          # using the one installer they were allowed. On the runs that could
+          # not, the review went read-only and still asserted behavioural claims
+          # ("this test would fail"): 23 rounds and 59 findings on #29 with
+          # roughly one review in three unable to check a single one.
+          #
+          # A repo's declared package manager is the one the gate has to be able
+          # to run, so this list has to track `packageManager`, not just npm.
           claude_args: |
             --model claude-opus-5
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(npm:*),Bash(npx:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(npm:*),Bash(npx:*),Bash(pnpm:*)"
