@@ -1,32 +1,30 @@
 name: Claude PR Review
-# Reusable: auto-review on PR open. Caller wires triggers + permissions.
+# Reusable: auto-review on PR. Caller wires triggers + permissions.
 #
-# The reviewer is allowed to RUN the JS gate, not just read the diff. None of
-# these repos run tests or type-checks as a PR check, so a review that can only
-# read is reviewing claims about the gate rather than the gate. Callers that
-# want this must grant `packages: read` alongside the rest — a reusable
-# workflow's permissions are intersected with the caller's, so requesting it
-# here alone does nothing.
+# This workflow READS A DIFF AND COMMENTS. It does not run the gate — each caller's
+# own `ci.yml` does, as a real check with a boolean conclusion. That split is the
+# whole point: a gate whose result depends on whether the model chose to run it, and
+# on whether the install happened to work that time, is not a gate. It was measured
+# failing to install on roughly one review in three, and the reviews that could not
+# install still asserted behavioural claims.
 #
-# Running a PR's package.json scripts is safe here for two reasons, and it is
-# worth being precise about which, because the obvious one is wrong: callers
-# are NOT all private. Five of the ten are public (MCPKit, docs, skills,
-# astralform-plugins, Astralform-JS-SDK), so "only org members can open a PR"
-# does not hold.
+# Everything the old version carried for that job is deliberately gone:
+#   - no setup-node / corepack / npm auth, and callers no longer need `packages: read`
+#   - no Bash(npm|npx|pnpm) grants, so no private-registry token in a job whose only
+#     purpose is to read a diff
+#   - no `gh`. The summary now goes through the action's own tracking comment.
+#     `gh` is NOT INSTALLED on the self-hosted runners, so `gh pr comment` silently
+#     forced every summary into an inline comment — that is, into a blocking review
+#     thread. Verified across Astralform #746–#759: zero top-level comments from this
+#     workflow, and four reviews saying so in their own words ("gh: command not found").
+#     A clean review therefore still handed the merge gate something to resolve, which
+#     is why the loop had no stop condition.
 #
-# What actually holds:
-#   1. The public callers do not pass `runner`, so they get the ephemeral
-#      `ubuntu-latest` default — never the org's persistent self-hosted pool.
-#      Only the private callers (Astralform, astralform-chat) pass self-hosted.
-#   2. This fires on `pull_request`, not `pull_request_target`. GitHub
-#      withholds secrets from fork-originated `pull_request` runs, so
-#      CLAUDE_CODE_OAUTH_TOKEN is absent and the review step fails before any
-#      npm/npx can run.
-#
-# Both are load-bearing. Adding `runner: self-hosted` to a public caller breaks
-# (1); switching to `pull_request_target` breaks (2). Either alone turns this
-# into fork-PR code execution — check both before changing the trigger or a
-# caller's runner.
+# `pull_request`, NOT `pull_request_target`: GitHub withholds secrets from
+# fork-originated `pull_request` runs, so a fork PR cannot reach
+# CLAUDE_CODE_OAUTH_TOKEN. Public callers must also leave `runner` at its default so
+# they get ephemeral hosted runners. Changing either turns this into fork-PR code
+# execution — check both before touching the trigger or a caller's runner.
 
 on:
   workflow_call:
@@ -47,35 +45,34 @@ jobs:
       pull-requests: write
       id-token: write
       actions: read
-      # Pull the private @astralform-ai/ui from GitHub Packages — same grant
-      # deploy.yml uses. Without it `npm ci` 401s and the gate can't run.
-      packages: read
+
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          # Was 1. Deep enough to reach the previous head so a re-review can scope
+          # to the delta instead of re-reading the whole diff on every push.
+          # Whole-diff re-review is why findings-per-push stayed flat across rounds
+          # instead of decaying, and why a PR that grows under review never converged.
+          fetch-depth: 50
 
       # Fail loudly if the workspace is not the repo this run is reviewing.
       #
       # A review once posted findings for a DIFFERENT repository's files
-      # (astralform-ai/Astralform#688): seven real astralform-chat paths, every
-      # line number in range, on an Astralform PR — and the check still went
-      # green, because the comments merely failed to anchor. A green check
-      # backed by someone else's code is worse than a red one; nothing in the
-      # PR UI showed the review had gone wrong.
+      # (astralform-ai/Astralform#688): seven real astralform-chat paths, every line
+      # number in range, on an Astralform PR — and the check still went green,
+      # because the comments merely failed to anchor. A green check backed by
+      # someone else's code is worse than a red one.
       #
-      # Self-hosted runners do not clean `_work` between jobs, so a sibling
-      # repo's checkout can persist for hours. This asserts the one thing that
-      # must be true before anything reads the tree, and turns a silent
-      # wrong-repo review into a failed job.
+      # Self-hosted runners do not clean `_work` between jobs, so a sibling repo's
+      # checkout can persist for hours.
       - name: Assert the workspace is this repository
         env:
           EXPECTED_REPO: ${{ github.repository }}
         run: |
-          # Exact match on a normalised owner/repo, NOT a substring: this org
-          # has names that prefix each other (Astralform vs Astralform-JS-SDK,
-          # Astralform-iOS-SDK), so a substring test would pass on precisely
-          # the mix-up this step exists to catch.
+          # Exact match on a normalised owner/repo, NOT a substring: this org has
+          # names that prefix each other (Astralform vs Astralform-JS-SDK,
+          # Astralform-iOS-SDK), so a substring test would pass on precisely the
+          # mix-up this step exists to catch.
           origin="$(git remote get-url origin)"
           actual="$(printf '%s' "$origin" \
             | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^https?://[^/]+/##')"
@@ -86,74 +83,21 @@ jobs:
             exit 1
           fi
 
-      # Written into the workspace rather than ~/.npmrc: the runner may be
-      # self-hosted, where $HOME persists between jobs and would accumulate a
-      # dead token line per run.
-      - name: Authenticate npm for GitHub Packages
-        if: hashFiles('**/package.json') != ''
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          printf '@astralform-ai:registry=https://npm.pkg.github.com\n' > "$GITHUB_WORKSPACE/.npmrc"
-          printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" >> "$GITHUB_WORKSPACE/.npmrc"
-
-      # The reviewer has to be able to RUN the suite, not just read it. Without this,
-      # `node` and `npm` are simply absent on some runners ("npm: command not found",
-      # and no node either), and on a repo that declares `packageManager: pnpm@x`
-      # there is no pnpm at all — so the install fails, the review falls back to
-      # reading the diff (which the prompt below tells it to do), and every
-      # behavioural claim in that review is asserted rather than verified. Measured
-      # on Astralform-JS-SDK: roughly one review in three could not install, on a PR
-      # that ran to 23 rounds and 59 findings. Whether a finding got checked came
-      # down to luck.
-      #
-      # `corepack enable` reads `packageManager` from package.json, so each repo gets
-      # the manager and version it actually declares and npm-only repos are
-      # unaffected. Both steps are gated on a package.json existing, matching the
-      # npm-auth step above, so non-JS repos skip them entirely.
-      #
-      # COREPACK_ENABLE_DOWNLOAD_PROMPT goes into $GITHUB_ENV rather than this step's
-      # env: corepack asks for confirmation the first time it fetches a pinned
-      # version, and that prompt appears when the REVIEW step invokes the package
-      # manager, not here. Unset, the install stalls on a question nobody answers.
-      #
-      # Node 22 because that is what the code being reviewed is built and shipped
-      # with: Astralform-JS-SDK's release.yml pins 22 ("current LTS, Node 20 reached
-      # EOL 2026-04") and frontend/Dockerfile builds on node:22-alpine. No caller
-      # declares `engines`, so nothing forces a version — which is exactly why this
-      # should track the release pipeline rather than a number picked here. A gate
-      # running an older runtime than the release build can pass on code that ships
-      # broken, and vice versa.
-      - name: Provide Node for the review gate
-        if: hashFiles('**/package.json') != ''
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Enable corepack so the repo's own package manager is available
-        if: hashFiles('**/package.json') != ''
-        run: |
-          corepack enable
-          echo "COREPACK_ENABLE_DOWNLOAD_PROMPT=0" >> "$GITHUB_ENV"
-          node --version
-          corepack --version
-
       # Bubblewrap creates its bind-mount TARGETS before mounting, and Claude Code's
       # sandbox puts two of them directly under /home:
       #
       #   bwrap: Can't create file at /home/.mcp.json: Permission denied
       #   bwrap: Can't mkdir /home/.claude: Permission denied
       #
-      # /home is root-owned on both GitHub-hosted ubuntu and our self-hosted box, so
-      # the create fails, the sandbox never initialises, and EVERY Bash command dies
+      # /home is root-owned on both hosted ubuntu and our self-hosted box, so the
+      # create fails, the sandbox never initialises, and EVERY Bash command dies
       # before it runs — `echo hello` included. Pre-creating the targets writable is
       # enough: bwrap then mounts over them instead of trying to make them.
       #
       # Deliberately not the alternatives: `sandbox.enabled: false` is ignored on
-      # Linux (anthropics/claude-code#35986, closed as not planned — measured
-      # ignored here too, 17 bwrap lines with it set), and deleting /usr/bin/bwrap
-      # would persist on the self-hosted runner and strip the sandbox from every
-      # workload on that host. This keeps the sandbox on.
+      # Linux (anthropics/claude-code#35986, closed as not planned), and deleting
+      # /usr/bin/bwrap would persist on the self-hosted runner and strip the sandbox
+      # from every workload on that host. This keeps the sandbox on.
       - name: Give bubblewrap its bind targets under /home
         run: |
           SUDO=""
@@ -164,69 +108,111 @@ jobs:
           ls -ld /home /home/.claude /home/.mcp.json || true
 
       - uses: anthropics/claude-code-action@v1
-        # `gh` resolves its repo from $GH_REPO first, else the git remote of
-        # the working directory. The allowed tools are all `gh pr *`, so a
-        # stray or stale git dir is enough to make `gh pr diff` return another
-        # repo's changes — the suspected channel for #688, where the reviewer
-        # had no file-reading tools at all yet still produced real paths from a
-        # sibling repo. Pinning it removes the inference entirely.
         env:
-          GH_REPO: ${{ github.repository }}
+          # `github.event.before` is the sha this reviewer last saw on a
+          # `synchronize`. Empty on `opened`, which is correctly read below as
+          # "first review, whole diff".
+          PREVIOUS_HEAD: ${{ github.event.before }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # Tag mode: the action creates and maintains ONE top-level tracking
+          # comment, and the final message lands in it. That is where the verdict
+          # goes. Critically, it is a plain issue comment and NOT a review thread,
+          # so a clean review no longer leaves the merge gate something to resolve.
+          # This replaces `gh pr comment`, which never worked on the self-hosted
+          # runners — see the header.
+          track_progress: true
+
           prompt: |
             REPO: ${{ github.repository }}
             PR: #${{ github.event.pull_request.number }}
 
-            Review this pull request for code quality, bugs, security, and performance.
-            The PR branch is checked out in the working directory.
+            You are reviewing a pull request. The branch is checked out.
 
-            These repos run no tests or type-checks as a PR check, so the local
-            gate is the only gate. Where the repo has a JS one, run it — the
-            type-check, lint and test scripts in package.json — and report what
-            it actually returned rather than repeating what the PR claims. If
-            dependencies will not install, say so plainly and fall back to
-            reading the diff; a broken install is a fact about this runner, not
-            a finding about the PR.
+            ## Severity — label every inline finding
 
-            Do NOT run the Python suite even where you can see one. Its
-            integration tests reach the production database through a tunnel,
-            so pytest here would write to prod.
+            The label is the first thing in the comment body. There are two.
 
-            Use `gh pr comment` for one top-level summary.
-            Use mcp__github_inline_comment__create_inline_comment (with confirmed: true)
-            for line-specific findings. Do not respond as a chat message.
-          # Pin the model. Unset, the action picks its own default, which is not
-          # the Opus tier — and a review is the one job here where model quality
-          # IS the product: this is the only gate these repos run on a PR, so a
-          # weaker reviewer is not a cheaper review, it is a missed bug. Nothing
-          # in the run surfaces which model reviewed, so the default is invisible
-          # until you go looking for it.
+              [BLOCKING] — the change is wrong, and you can name a concrete input
+                           that produces a wrong output. Broken behaviour, a guard
+                           that does not hold, data loss, a leak, a race, an
+                           unhandled error path, a broken contract, a security hole,
+                           or a test that passes both with and without the change.
+
+              [NIT]      — everything else. Stale or imprecise comments, docstrings
+                           and markdown; naming; wording; readability; "consider
+                           extracting"; "you could also handle X"; anything whose
+                           fix grows the diff.
+
+            Two rules on that boundary, because they are where this goes wrong:
+
+            - Documentation coherence is ALWAYS [NIT]. A docstring, comment or
+              markdown file that contradicts the code is a real defect and is never
+              blocking. Provably wrong is what makes it worth reporting — not what
+              makes it worth blocking.
+
+            - If you cannot name an input that produces a wrong output, it is [NIT].
+              "This could confuse a reader" and "a future maintainer might" are nits.
+              Strength of wording is not severity.
+
+            When unsure, label [NIT]. A missed nit costs a line of prose; a
+            mislabelled blocker costs a full review round.
+
+            ## Scope
+
+            If PREVIOUS_HEAD is set and non-empty, this is a RE-REVIEW and the new
+            work is the delta:
+
+                git log --oneline "$PREVIOUS_HEAD"..HEAD
+                git diff "$PREVIOUS_HEAD"..HEAD
+
+            Report on THAT delta. Read wider for context, but do not re-raise a
+            finding you have already made — an open thread means the author has not
+            replied yet, not that the point needs restating. One exception, and only
+            one: if the delta breaks something OUTSIDE it, say so and cite both
+            locations.
+
+            Do not report on code this PR does not touch.
+
+            ## Verdict
+
+            End your summary with exactly one of these, on its own line:
+
+                VERDICT: BLOCKING — <n> blocking finding(s)
+                VERDICT: CLEAN — no blocking findings
+
+            CLEAN is the expected outcome of a good PR and of most re-reviews. It is
+            a complete review, not a failure to find anything. Do not manufacture a
+            blocking finding to avoid it, and do not withhold it because nits remain
+            — nits are recorded and merged past.
+
+            ## Mechanics
+
+            You are one half of an automated merge loop with a 3-round budget. You
+            label; the driver decides. A [BLOCKING] finding costs a full round; a
+            [NIT] is recorded and merged past. Report everything you find, label it
+            honestly, and do not inflate severity to force attention — nits are read.
+
+            Tests, type-checks and lint run as a SEPARATE CI check on this PR. Do not
+            try to run them and do not restate their result as a finding; read the
+            check if you need it.
+
+            Your final message becomes the top-level summary comment — do not use
+            `gh`, and never post the summary as an inline comment. Use
+            mcp__github_inline_comment__create_inline_comment (confirmed: true) for
+            line-specific findings, one call per finding.
+
+          # Pin the model. Unset, the action picks its own default, which is not the
+          # Opus tier — and nothing in a run surfaces which model reviewed, so the
+          # default is invisible until you go looking for it.
           #
-          # `claude-opus-5` is the complete id — the current Opus. Do NOT append
-          # a date suffix; the dated form is a different string and 404s.
+          # `claude-opus-5` is the complete id. Do NOT append a date suffix; the
+          # dated form is a different string and 404s.
           #
-          # ---
-          #
-          # `pnpm` belongs in this list for the same reason `npm` does, and its
-          # absence was invisible in a way worth spelling out: the tool was
-          # PRESENT and FORBIDDEN. #13 put a pnpm shim on PATH (verified —
-          # `which pnpm` resolves under the hosted toolcache), and every
-          # invocation still died with "refused before executing", because this
-          # list gates what the reviewer may run and named only npm.
-          #
-          # That is what made the failure look like flaky infrastructure rather
-          # than a missing permission: Astralform-JS-SDK declares
-          # `packageManager: pnpm@10.30.1`, so the reviewer could only install by
-          # reaching for `npm install --prefix packages/core` — which sometimes
-          # worked and sometimes did not. The runs that "rescued themselves" were
-          # using the one installer they were allowed. On the runs that could
-          # not, the review went read-only and still asserted behavioural claims
-          # ("this test would fail"): 23 rounds and 59 findings on #29 with
-          # roughly one review in three unable to check a single one.
-          #
-          # A repo's declared package manager is the one the gate has to be able
-          # to run, so this list has to track `packageManager`, not just npm.
+          # The tool list is now just the two things a reviewer needs: the inline
+          # comment channel, and enough git to see its own delta. npm/npx/pnpm left
+          # with the gate; `gh` was never installed on the self-hosted runners.
           claude_args: |
             --model claude-opus-5
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(npm:*),Bash(npx:*),Bash(pnpm:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git diff:*),Bash(git log:*)"
