@@ -107,7 +107,25 @@ jobs:
           $SUDO chmod 0777 /home/.claude /home/.mcp.json || true
           ls -ld /home /home/.claude /home/.mcp.json || true
 
-      - uses: anthropics/claude-code-action@v1
+      # The action's buffered inline comments live at a fixed path on the
+      # RUNNER (/tmp/inline-comments-buffer.jsonl). Our runners are a shared
+      # box (hostinger-org-3 and org-5 on one host), so a previous job from a
+      # DIFFERENT repository leaves its buffer behind, and this workflow's
+      # post-step replays those comments against THIS repo's diff — every
+      # failed run this week tried to post comments for paths that do not
+      # exist in this repository (src/api/useChatRuntime.ts, ...). The buffer
+      # is only consumed by the post-step of the run that wrote it, so
+      # deleting it up front cannot lose anything.
+      - name: Clear stale inline-comment buffer from shared runner
+        run: rm -f /tmp/inline-comments-buffer.jsonl
+
+      # Pinned to v1.0.191 (239e3a7), the last release that worked for us.
+      # The `v1` tag moved to v1.0.192 on 2026-08-13 23:31 and every run since
+      # dies ~1s after init with is_error:true, num_turns:1, $0 — the model
+      # never does any work. Same signature reported by other orgs, including
+      # on hosted runners: anthropics/claude-code-action#1614 (OAuth 401) and
+      # #1645 (404). Unpin to @v1 once upstream ships a fix.
+      - uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126
         env:
           # `github.event.before` is the sha this reviewer last saw on a
           # `synchronize`. Empty on `opened`, which is correctly read below as
