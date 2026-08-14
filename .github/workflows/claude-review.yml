@@ -119,12 +119,20 @@ jobs:
       - name: Clear stale inline-comment buffer from shared runner
         run: rm -f /tmp/inline-comments-buffer.jsonl
 
-      # Pinned to v1.0.191 (239e3a7), the last release that worked for us.
-      # The `v1` tag moved to v1.0.192 on 2026-08-13 23:31 and every run since
-      # dies ~1s after init with is_error:true, num_turns:1, $0 — the model
-      # never does any work. Same signature reported by other orgs, including
-      # on hosted runners: anthropics/claude-code-action#1614 (OAuth 401) and
-      # #1645 (404). Unpin to @v1 once upstream ships a fix.
+      # Pinned to v1.0.191 (239e3a7) for determinism while upstream is in
+      # flux. NOTE: the 2026-08-14 outage was NOT the action version — a
+      # pinned v1.0.191 run failed identically (is_error:true, num_turns:1,
+      # $0) right after the v1.0.192-era failures. Root cause was the
+      # claude.ai account behind CLAUDE_CODE_OAUTH_TOKEN hitting its weekly
+      # usage limit ("You've hit your weekly limit" from the local CLI,
+      # account-wide, all models). The last run before the cap — Aug 13
+      # 14:11, 18 turns, $1.20 — exhausted the remaining quota mid-run. The
+      # Aug 13 "Checksum verification failed" errors were a separate,
+      # transient download race on the shared self-hosted box.
+      #
+      # Revisit @v1 once anthropics/claude-code-action#1614/#1645 are closed
+      # (unrelated orgs report auth errors with the same instant-death
+      # signature) and once the review budget fits the account's usage cap.
       - uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126
         env:
           # `github.event.before` is the sha this reviewer last saw on a
