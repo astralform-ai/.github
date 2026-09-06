@@ -142,6 +142,25 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
+          # `astralform-agent` opens PRs of its own, and the action REFUSES a
+          # non-human actor unless the bot is named here — `allowed_bots` defaults
+          # to empty, which allows none. So every PR the org's own agent opened
+          # died at the actor gate with exit 1 before reading a line of the diff
+          # (Astralform-JS-SDK#61, run 34038905427: `ALLOWED_BOTS:` empty,
+          # "Workflow initiated by non-human actor: astralform-agent (type: Bot)").
+          # Agent-authored PRs are exactly the ones that most need a reviewer.
+          #
+          # Named, NOT `*`. Every caller of this workflow is reachable from a
+          # public repo, and `*` there would let any external App that can reach
+          # the trigger spend this org's review budget — the action's own security
+          # note. The match is case-insensitive and strips a trailing `[bot]`, so
+          # this one entry covers the `astralform-agent[bot]` actor string.
+          #
+          # This gate is orthogonal to fork safety: the trigger is `pull_request`,
+          # so a fork run gets no secrets and cannot reach the token regardless of
+          # who or what opened it.
+          allowed_bots: astralform-agent
+
           # Tag mode: the action creates and maintains ONE top-level tracking
           # comment, and the final message lands in it. That is where the verdict
           # goes. Critically, it is a plain issue comment and NOT a review thread,
