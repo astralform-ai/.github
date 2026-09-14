@@ -12,7 +12,9 @@ permissions:
 
 jobs:
   sync:
-    runs-on: self-hosted
+    # Linux: `self-hosted` alone also matches the macOS runners, which are
+    # reserved for the jobs that need macOS.
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v6
       - uses: EndBug/label-sync@v2
