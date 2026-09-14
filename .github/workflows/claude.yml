@@ -5,7 +5,9 @@ on:
   workflow_call:
     inputs:
       runner:
-        description: Runner label or labels (e.g. ubuntu-latest, self-hosted)
+        description: >-
+          Runner label: ubuntu-latest (default), or self-hosted for the org's
+          Linux self-hosted pool
         type: string
         default: ubuntu-latest
     secrets:
@@ -36,7 +38,10 @@ jobs:
         (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))
           && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
       )
-    runs-on: ${{ inputs.runner }}
+    # `self-hosted` means the org's Linux self-hosted pool, for the reason given
+    # in claude-review.yml: the bubblewrap step below is Linux-only, and the pool
+    # also holds macOS runners.
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "linux"]') || inputs.runner }}
     permissions:
       contents: write
       pull-requests: write
