@@ -5,7 +5,9 @@ on:
   workflow_call:
     inputs:
       runner:
-        description: Runner label or labels (e.g. ubuntu-latest, self-hosted)
+        description: >-
+          Runner label: ubuntu-latest (default), or self-hosted for the org's
+          Linux self-hosted pool
         type: string
         default: ubuntu-latest
     secrets:
@@ -14,7 +16,10 @@ on:
 
 jobs:
   triage:
-    runs-on: ${{ inputs.runner }}
+    # `self-hosted` means the org's Linux self-hosted pool, for the reason given
+    # in claude-review.yml: the bubblewrap step below is Linux-only, and the pool
+    # also holds macOS runners.
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "linux"]') || inputs.runner }}
     timeout-minutes: 10
     permissions:
       contents: read
