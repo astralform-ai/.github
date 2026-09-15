@@ -12,9 +12,11 @@ permissions:
 
 jobs:
   sync:
-    # Linux: `self-hosted` alone also matches the macOS runners, which are
-    # reserved for the jobs that need macOS.
-    runs-on: [self-hosted, linux]
+    # GitHub-hosted, unlike the private repos' label syncs: this repo is public,
+    # and the org's self-hosted runner groups do not admit public repositories
+    # (so a fork can never reach the production VPS). A self-hosted label here
+    # queues until the job expires. Hosted minutes are free for public repos.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: EndBug/label-sync@v2
